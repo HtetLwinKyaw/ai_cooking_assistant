@@ -9,6 +9,7 @@ from torchvision import transforms
 from ingredients_recipe.data.dataset import IngredientDataset
 from ingredients_recipe.models.model import IngredientModel
 from ingredients_recipe.recipes.generator import RecipeGenerator
+from ingredients_recipe.vision.dish_model import DishModel
 
 app = FastAPI(title="AI Cooking Assistant API")
 
@@ -16,6 +17,13 @@ app = FastAPI(title="AI Cooking Assistant API")
 # DEVICE
 # -------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -------------------------
+# LOAD DISH MODEL
+# -------------------------
+dish_model = DishModel(
+    checkpoint_path="checkpoints/dish/best.pt"
+)
 
 # -------------------------
 # LOAD DATASET (VOCAB ONLY)
@@ -27,7 +35,7 @@ ingredient_vocab = dataset.ingredient_vocab
 # -------------------------
 # LOAD INGREDIENT MODEL
 # -------------------------
-CHECKPOINT_PATH = "checkpoints/best.pt"
+ING_CHECKPOINT = "checkpoints/best.pt"
 
 ingredient_model = IngredientModel(
     encoder_name="resnet50",
@@ -36,7 +44,7 @@ ingredient_model = IngredientModel(
     freeze_encoder=True,
 ).to(device)
 
-checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
+checkpoint = torch.load(ING_CHECKPOINT, map_location=device)
 if isinstance(checkpoint, dict) and "model_state" in checkpoint:
     ingredient_model.load_state_dict(checkpoint["model_state"])
 else:
@@ -88,6 +96,9 @@ async def predict_ingredients_and_recipe(
     threshold: float = 0.5,
 ):
     image_bytes = await file.read()
+    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    # ---- Ingredient prediction ----
     image_tensor = preprocess_image(image_bytes)
 
     with torch.no_grad():
@@ -95,17 +106,26 @@ async def predict_ingredients_and_recipe(
         probs = torch.sigmoid(logits).squeeze(0)
 
     predicted_ingredients = [
-        ing
-        for ing, p in zip(ingredient_vocab, probs)
+        ing for ing, p in zip(ingredient_vocab, probs)
         if p.item() >= threshold
     ]
 
-    recipe = None
-    if predicted_ingredients:
-        recipe = recipe_generator.generate(predicted_ingredients)
+    # optional cleanup
+    UNLIKELY_COMBOS = {"sugar"}
+    predicted_ingredients = [
+        ing for ing in predicted_ingredients if ing not in UNLIKELY_COMBOS
+    ]
+
+    # ---- Dish prediction ----
+    dish = dish_model.predict(pil_image)
+
+    # ---- Recipe generation ----
+    final_ingredients = list(set(predicted_ingredients + [dish]))
+    recipe = recipe_generator.generate(final_ingredients)
 
     return {
-        "ingredients": predicted_ingredients,
+        "dish": dish,
+        "ingredients": final_ingredients,
         "recipe": recipe,
         "threshold": threshold,
     }

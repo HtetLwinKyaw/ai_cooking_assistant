@@ -23,17 +23,12 @@ class RecipeGenerator:
         self.model.eval()
 
     def generate(self, ingredients: list[str]) -> str:
-        """
-        ingredients: list of ingredient strings
-        returns: generated recipe text
-        """
-
-        ingredient_text = ", ".join(ingredients)
+        ingredient_text = ", ".join(sorted(set(ingredients)))
 
         prompt = (
-            "Write a clear, step-by-step cooking recipe using the following ingredients:\n"
-            f"{ingredient_text}\n\n"
-            "Include preparation steps and cooking instructions."
+            "Create a complete cooking recipe using the following ingredients.\n\n"
+            f"Ingredients: {ingredient_text}\n\n"
+            "Write numbered cooking steps."
         )
 
         inputs = self.tokenizer(
@@ -46,13 +41,22 @@ class RecipeGenerator:
             outputs = self.model.generate(
                 **inputs,
                 max_length=self.max_length,
-                num_beams=4,
+                min_length=80,
+                do_sample=True,
                 temperature=0.9,
+                top_p=0.95,
+                num_beams=4,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
             )
 
         recipe = self.tokenizer.decode(
             outputs[0],
             skip_special_tokens=True,
         )
+
+        # ---- SAFETY: remove prompt echo if it happens ----
+        if "Ingredients:" in recipe:
+            recipe = recipe.split("Ingredients:")[-1].strip()
 
         return recipe
