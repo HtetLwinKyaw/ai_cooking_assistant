@@ -6,13 +6,14 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 class RecipeGenerator:
     """
-    Generates cooking recipes from ingredient lists using a pretrained FLAN-T5 model.
+    Generates robust cooking recipes from ingredient lists
+    using a large instruction-tuned model.
     """
 
     def __init__(
         self,
-        model_name: str = "google/flan-t5-base",
-        max_length: int = 256,
+        model_name: str = "google/flan-t5-large",
+        max_length: int = 384,
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -22,13 +23,14 @@ class RecipeGenerator:
         self.max_length = max_length
         self.model.eval()
 
-    def generate(self, ingredients: list[str]) -> str:
+    def generate(self, ingredients: list[str]) -> dict:
         ingredient_text = ", ".join(sorted(set(ingredients)))
 
         prompt = (
-            "Create a complete cooking recipe using the following ingredients.\n\n"
+            "You are a professional chef.\n\n"
+            "Write a complete, realistic cooking recipe using ONLY the ingredients below.\n\n"
             f"Ingredients: {ingredient_text}\n\n"
-            "Write numbered cooking steps."
+            "Write the recipe using realistic cooking methods (e.g., boiling, sautéing, simmering) appropriate for the dish."
         )
 
         inputs = self.tokenizer(
@@ -41,7 +43,7 @@ class RecipeGenerator:
             outputs = self.model.generate(
                 **inputs,
                 max_length=self.max_length,
-                min_length=80,
+                min_length=150,
                 do_sample=True,
                 temperature=0.9,
                 top_p=0.95,
@@ -50,13 +52,29 @@ class RecipeGenerator:
                 no_repeat_ngram_size=3,
             )
 
-        recipe = self.tokenizer.decode(
+        text = self.tokenizer.decode(
             outputs[0],
             skip_special_tokens=True,
         )
 
-        # ---- SAFETY: remove prompt echo if it happens ----
-        if "Ingredients:" in recipe:
-            recipe = recipe.split("Ingredients:")[-1].strip()
+        # ---- Clean obvious junk tokens ----
+        text = text.replace("<", "").replace(">", "").strip()
 
-        return recipe
+        # ---- Extract steps if possible ----
+        steps = []
+        for line in text.split("\n"):
+            line = line.strip()
+            if line and line[0].isdigit():
+                steps.append(line.lstrip("0123456789. ").strip())
+
+        if not steps:
+            steps = [
+            s.strip()
+            for s in text.split(". ")
+            if len(s.strip()) > 20
+    ]
+
+        return {
+            "recipe_text": text,
+            "steps": steps,
+        }

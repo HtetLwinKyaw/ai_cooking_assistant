@@ -48,9 +48,28 @@ class DishModel:
         )
 
     @torch.no_grad()
-    def predict(self, image: Image.Image) -> str:
-        x = self.transform(image).unsqueeze(0).to(self.device)
-        logits = self.model(x)
-        pred_idx = logits.argmax(dim=1).item()
-        class_id = self.idx_to_class[pred_idx]
-        return self.dish_labels.get(class_id, class_id)
+    def predict(self, image: Image.Image, top_k: int = 3) -> dict:
+     x = self.transform(image).unsqueeze(0).to(self.device)
+     logits = self.model(x)
+
+     probs = torch.softmax(logits, dim=1).squeeze(0)
+
+     top_probs, top_idxs = probs.topk(top_k)
+
+     results = []
+     for p, idx in zip(top_probs, top_idxs):
+         class_id = self.idx_to_class[idx.item()]
+         dish_name = self.dish_labels.get(class_id, class_id)
+
+         results.append(
+            {
+                "dish": dish_name,
+                "confidence": round(float(p), 4),
+            }
+        )
+
+     return {
+        "top_prediction": results[0],
+        "alternatives": results[1:],
+    }
+
